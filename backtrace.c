@@ -95,7 +95,7 @@ output_print(struct output_buffer *ob, const char * format, ...) {
 
 static void
 lookup_section(bfd *abfd, asection *sec, void *opaque_data) {
-    struct find_info *data = opaque_data;
+    struct find_info *data = (struct find_info *)opaque_data;
 
     if (data->func)
         return;
@@ -176,7 +176,7 @@ init_bfd_ctx(struct bfd_ctx *bc, const char * procname, int *err) {
     }
 
     bc->handle = b;
-    bc->symbol = symbol_table;
+    bc->symbol = (asymbol **)symbol_table;
 
     if(err) {
         *err = BFD_ERR_OK;
@@ -208,8 +208,8 @@ get_bc(struct bfd_set *set, const char *procname, int *err) {
     if (init_bfd_ctx(&bc, procname, err)) {
         return NULL;
     }
-    set->next = calloc(1, sizeof(*set));
-    set->bc = malloc(sizeof(struct bfd_ctx));
+    set->next = (struct bfd_set *)calloc(1, sizeof(*set));
+    set->bc = (struct bfd_ctx *)malloc(sizeof(struct bfd_ctx));
     memcpy(set->bc, &bc, sizeof(bc));
     set->name = strdup(procname);
 
@@ -226,6 +226,15 @@ release_set(struct bfd_set *set) {
         set = temp;
     }
 }
+
+#ifdef _WIN64
+#define Eip                 Rip
+#define Esp                 Rsp
+#define Ebp                 Rbp
+#define DISPLACEMENT_TYPE   DWORD64
+#else
+#define DISPLACEMENT_TYPE   DWORD
+#endif // _WIN64
 
 static void
 _backtrace(struct output_buffer *ob, struct bfd_set *set, int depth, LPCONTEXT context) {
@@ -268,7 +277,7 @@ _backtrace(struct output_buffer *ob, struct bfd_set *set, int depth, LPCONTEXT c
         symbol->SizeOfStruct = (sizeof *symbol) + 255;
         symbol->MaxNameLength = 254;
 
-        DWORD module_base = SymGetModuleBase(process, frame.AddrPC.Offset);
+        uintptr_t module_base = (uintptr_t)SymGetModuleBase(process, frame.AddrPC.Offset);
 
         const char * module_name = "[unknown module]";
         if (module_base &&
@@ -286,7 +295,7 @@ _backtrace(struct output_buffer *ob, struct bfd_set *set, int depth, LPCONTEXT c
         }
 
         if (file == NULL) {
-            DWORD dummy = 0;
+            DISPLACEMENT_TYPE dummy = 0;
             if (SymGetSymFromAddr(process, frame.AddrPC.Offset, &dummy, symbol)) {
                 file = symbol->Name;
             } else {
@@ -322,7 +331,7 @@ exception_filter(LPEXCEPTION_POINTERS info) {
         output_print(&ob,"Failed to init symbol context\n");
     } else {
         bfd_init();
-        struct bfd_set *set = calloc(1,sizeof(*set));
+        struct bfd_set *set = (struct bfd_set *)calloc(1,sizeof(*set));
         _backtrace(&ob, set, 128, info->ContextRecord);
         release_set(set);
 
@@ -337,7 +346,7 @@ exception_filter(LPEXCEPTION_POINTERS info) {
 static void
 backtrace_register(void) {
     if (g_output == NULL) {
-        g_output = malloc(BUFFER_MAX);
+        g_output = (char *)malloc(BUFFER_MAX);
         g_prev = SetUnhandledExceptionFilter(exception_filter);
     }
 }
@@ -350,16 +359,6 @@ backtrace_unregister(void) {
         g_prev = NULL;
         g_output = NULL;
     }
-}
-
-int
-__printf__(const char * format, ...) {
-    int value;
-    va_list arg;
-    va_start(arg, format);
-    value = vprintf ( format, arg );
-    va_end(arg);
-    return value;
 }
 
 BOOL WINAPI
